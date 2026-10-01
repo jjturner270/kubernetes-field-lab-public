@@ -1,0 +1,37 @@
+---
+- name: Install containerd
+  ansible.builtin.apt:
+    name: containerd
+    state: present
+    update_cache: true
+
+- name: Ensure containerd config directory exists
+  ansible.builtin.file:
+    path: /etc/containerd
+    state: directory
+    mode: "0755"
+
+- name: Generate default containerd config
+  ansible.builtin.shell: |
+    set -o pipefail
+    containerd config default > /etc/containerd/config.toml
+  args:
+    executable: /bin/bash
+    creates: /etc/containerd/config.toml
+  notify: restart containerd
+
+- name: Use systemd cgroups
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
+  notify: restart containerd
+
+- name: Enable and start containerd
+  ansible.builtin.systemd:
+    name: containerd
+    enabled: true
+    state: started
+
+- name: Flush containerd restart before kubeadm
+  ansible.builtin.meta: flush_handlers

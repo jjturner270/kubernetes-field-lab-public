@@ -1,0 +1,5 @@
+kubernetes_minor: "v1.34"
+cilium_version: "1.20.2"
+pod_cidr: "10.244.0.0/16"
+service_cidr: "10.96.0.0/12"
+kubeconfig_local_path: "{{ playbook_dir }}/../.kube/config"

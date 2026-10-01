@@ -1,0 +1,10 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+*.tfplan
+.kube/
+ansible/inventory.ini
+evidence/*
+!evidence/.gitkeep
+*.retry

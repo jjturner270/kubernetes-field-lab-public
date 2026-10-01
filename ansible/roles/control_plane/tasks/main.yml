@@ -1,0 +1,131 @@
+---
+- name: Check whether control plane already exists
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: admin_conf
+
+- name: Initialize Kubernetes control plane
+  ansible.builtin.command:
+    cmd: >-
+      kubeadm init
+      --apiserver-advertise-address={{ private_ip }}
+      --apiserver-cert-extra-sans={{ ansible_host }}
+      --pod-network-cidr={{ pod_cidr }}
+      --service-cidr={{ service_cidr }}
+      --node-name={{ inventory_hostname }}
+  when: not admin_conf.stat.exists
+  register: kubeadm_init
+
+- name: Ensure root kube directory exists
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    mode: "0700"
+
+- name: Install root kubeconfig
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /root/.kube/config
+    remote_src: true
+    mode: "0600"
+
+- name: Determine architecture
+  ansible.builtin.set_fact:
+    cilium_arch: "{{ 'arm64' if ansible_facts['architecture'] in ['aarch64', 'arm64'] else 'amd64' }}"
+
+- name: Query latest stable Cilium CLI version
+  ansible.builtin.uri:
+    url: https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt
+    return_content: true
+  register: cilium_cli_stable
+
+- name: Set Cilium CLI version
+  ansible.builtin.set_fact:
+    cilium_cli_version: "{{ cilium_cli_stable.content | trim }}"
+
+- name: Download Cilium CLI archive
+  ansible.builtin.get_url:
+    url: "https://github.com/cilium/cilium-cli/releases/download/{{ cilium_cli_version }}/cilium-linux-{{ cilium_arch }}.tar.gz"
+    dest: /tmp/cilium-cli.tar.gz
+    mode: "0644"
+
+- name: Download Cilium CLI checksum
+  ansible.builtin.get_url:
+    url: "https://github.com/cilium/cilium-cli/releases/download/{{ cilium_cli_version }}/cilium-linux-{{ cilium_arch }}.tar.gz.sha256sum"
+    dest: /tmp/cilium-cli.tar.gz.sha256sum
+    mode: "0644"
+
+- name: Verify Cilium CLI checksum
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cd /tmp
+    sed -i "s#cilium-linux-{{ cilium_arch }}.tar.gz#/tmp/cilium-cli.tar.gz#" cilium-cli.tar.gz.sha256sum
+    sha256sum --check cilium-cli.tar.gz.sha256sum
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Install Cilium CLI
+  ansible.builtin.unarchive:
+    src: /tmp/cilium-cli.tar.gz
+    dest: /usr/local/bin
+    remote_src: true
+    include:
+      - cilium
+    mode: "0755"
+
+- name: Check whether Cilium is already installed
+  ansible.builtin.command:
+    cmd: kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system get daemonset cilium
+  register: cilium_present
+  changed_when: false
+  failed_when: false
+
+- name: Install Cilium
+  ansible.builtin.command:
+    cmd: >-
+      cilium install
+      --version {{ cilium_version }}
+      --kubeconfig /etc/kubernetes/admin.conf
+      --set "ipam.operator.clusterPoolIPv4PodCIDRList[0]={{ pod_cidr }}"
+  when: cilium_present.rc != 0
+
+- name: Wait for Cilium
+  ansible.builtin.command:
+    cmd: cilium status --kubeconfig /etc/kubernetes/admin.conf --wait --wait-duration 5m
+  changed_when: false
+
+- name: Create fresh worker join command
+  ansible.builtin.command:
+    cmd: kubeadm token create --print-join-command
+  register: worker_join_command
+  changed_when: false
+
+- name: Ensure local kubeconfig directory exists on controller
+  ansible.builtin.file:
+    path: "{{ kubeconfig_local_path | dirname }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: Fetch admin kubeconfig to workstation
+  ansible.builtin.fetch:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ kubeconfig_local_path }}"
+    flat: true
+
+- name: Rewrite local kubeconfig to public control-plane address
+  ansible.builtin.replace:
+    path: "{{ kubeconfig_local_path }}"
+    regexp: 'server: https://[^:]+:6443'
+    replace: "server: https://{{ ansible_host }}:6443"
+  delegate_to: localhost
+  become: false
+
+- name: Protect local kubeconfig permissions
+  ansible.builtin.file:
+    path: "{{ kubeconfig_local_path }}"
+    mode: "0600"
+  delegate_to: localhost
+  become: false

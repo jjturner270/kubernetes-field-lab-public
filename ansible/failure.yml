@@ -1,0 +1,14 @@
+---
+- name: Deliberately stop kubelet on worker-01
+  hosts: worker-01
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Stop kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        state: stopped
+
+    - name: Show failure injection
+      ansible.builtin.debug:
+        msg: "FAILURE INJECTED: kubelet stopped on worker-01"

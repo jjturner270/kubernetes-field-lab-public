@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: field-app-html
+  namespace: field-lab
+data:
+  index.html: |
+    <!doctype html>
+    <html>
+      <head><title>Kubernetes Field Lab</title></head>
+      <body>
+        <h1>KUBERNETES FIELD LAB</h1>
+        <p>Terraform → Ansible → kubeadm → Cilium → verified workload.</p>
+      </body>
+    </html>

@@ -1,0 +1,33 @@
+---
+- name: Prepare every Kubernetes node
+  hosts: k8s
+  become: true
+  gather_facts: true
+  roles:
+    - common
+    - containerd
+    - kubernetes
+
+- name: Bootstrap control plane
+  hosts: control
+  become: true
+  gather_facts: true
+  roles:
+    - control_plane
+
+- name: Join workers
+  hosts: workers
+  become: true
+  gather_facts: true
+  roles:
+    - worker
+
+- name: Verify node readiness from control plane
+  hosts: control
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for all three nodes to become Ready
+      ansible.builtin.command:
+        cmd: kubectl --kubeconfig /etc/kubernetes/admin.conf wait nodes --all --for=condition=Ready --timeout=300s
+      changed_when: false

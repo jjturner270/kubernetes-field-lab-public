@@ -1,0 +1,93 @@
+---
+- name: Disable swap now
+  ansible.builtin.command: swapoff -a
+  changed_when: false
+
+- name: Disable swap in fstab
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\sswap\s+.*)$'
+    replace: '# \1'
+
+- name: Configure Hetzner private network
+  ansible.builtin.copy:
+    dest: /etc/netplan/60-private-network.yaml
+    mode: "0600"
+    content: |
+      network:
+        version: 2
+        renderer: networkd
+        ethernets:
+          enp7s0:
+            addresses:
+              - {{ private_ip }}/32
+            routes:
+              - to: 10.10.0.0/16
+                via: 10.10.0.1
+                on-link: true
+  notify: apply netplan
+
+- name: Apply private networking before Kubernetes configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for expected private IP to appear
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ip -4 addr show | grep -F "{{ private_ip }}/32"
+  args:
+    executable: /bin/bash
+  register: private_ip_check
+  retries: 12
+  delay: 2
+  until: private_ip_check.rc == 0
+  changed_when: false
+
+- name: Verify private gateway is reachable
+  ansible.builtin.command:
+    cmd: ping -c 1 -W 2 10.10.0.1
+  register: private_gateway_check
+  retries: 5
+  delay: 2
+  until: private_gateway_check.rc == 0
+  changed_when: false
+
+- name: Configure kernel modules
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k8s.conf
+    mode: "0644"
+    content: |
+      overlay
+      br_netfilter
+
+- name: Load overlay
+  community.general.modprobe:
+    name: overlay
+    state: present
+
+- name: Load br_netfilter
+  community.general.modprobe:
+    name: br_netfilter
+    state: present
+
+- name: Configure Kubernetes sysctls
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-kubernetes-cri.conf
+    mode: "0644"
+    content: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward                 = 1
+
+- name: Apply sysctls
+  ansible.builtin.command: sysctl --system
+  changed_when: false
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gpg
+      - apt-transport-https
+    state: present
+    update_cache: true

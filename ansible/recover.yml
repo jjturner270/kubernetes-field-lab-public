@@ -1,0 +1,21 @@
+---
+- name: Recover worker-01
+  hosts: worker-01
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Start kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        state: started
+        enabled: true
+
+- name: Re-observe cluster after remediation
+  hosts: control
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for worker-01 to report Ready
+      ansible.builtin.command:
+        cmd: kubectl --kubeconfig /etc/kubernetes/admin.conf wait node/worker-01 --for=condition=Ready --timeout=180s
+      changed_when: false
